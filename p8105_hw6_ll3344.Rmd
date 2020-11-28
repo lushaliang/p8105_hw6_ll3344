@@ -1,0 +1,215 @@
+---
+title: "p8105_hw6_ll3344"
+author: "Lusha Liang"
+output: github_document
+---
+
+Load packages.
+```{r}
+library(tidyverse)
+library(modelr)
+library(Boruta)
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+
+## Problem 1: Revisiting Homicide Data 
+
+First we read in the data and create a city_state variable combining city name and state name. We then create a variable called resolution, which is a binary variable indicating whether the homicide is solved. We omit Dallas, TX, Phoenix, AZ and Kansas City, MO since these cities do not report victim race. We also omit Tulsa, AL as this is is a data entry mistake. We then filter only for white and black victims as these are the most common races represented in this dataset. 
+
+```{r}
+homicide_df = 
+  read_csv("data/homicide_data.csv", na = c("", "NA", "Unknown")) %>% 
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    victim_age = as.numeric(victim_age),
+    resolution = case_when(
+      disposition == "Closed without arrest" ~ 0,
+      disposition == "Open/No arrest"        ~ 0,
+      disposition == "Closed by arrest"      ~ 1)
+  ) %>% 
+  filter(
+    victim_race %in% c("White", "Black"),
+    city_state != "Tulsa, AL") %>% 
+  select(city_state, resolution, victim_age, victim_race, victim_sex)
+```
+
+For the city of Baltimore, MD, we use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors. We then create a table showing the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing non-white victims to white victims keeping all other variables fixed.
+
+```{r}
+baltimore_df =
+  homicide_df %>% 
+  filter(city_state == "Baltimore, MD")
+
+glm(resolution ~ victim_age + victim_race + victim_sex, 
+    data = baltimore_df,
+    family = binomial()) %>% 
+  broom::tidy() %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>% 
+  select(term, OR, starts_with("CI")) %>% 
+  knitr::kable(digits = 3)
+```
+
+We then run glm for each of the cities in the dataset and create a dataframe with estimated ORs and CIs for each city.
+
+```{r}
+models_results_df = 
+  homicide_df %>% 
+  nest(data = -city_state) %>% 
+  mutate(
+    models = 
+      map(.x = data, ~glm(resolution ~ victim_age + victim_race + victim_sex, data = .x, family = binomial())),
+    results = map(models, broom::tidy)
+  ) %>% 
+  select(city_state, results) %>% 
+  unnest(results) %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>% 
+  select(city_state, term, OR, starts_with("CI")) 
+```
+
+Finally, we created a plot that shows the estimated ORs and CIs for each city. The plot shows that compared to black victims, white victims are generally more likely to have their homicides solved by arrest. In particular cities this is especially apparent (e.g. Boston, Omaha, and Oakland). 
+
+```{r}
+models_results_df %>% 
+  filter(term == "victim_raceWhite") %>% 
+  mutate(city_state = fct_reorder(city_state, OR)) %>% 
+  ggplot(aes(x = city_state, y = OR)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Problem 2: Birthweight Models
+
+Read in and tidy the data. There are no missing values in the data. 
+
+```{r}
+baby_df = 
+  read_csv("./data/birthweight.csv") %>%
+  mutate_at(c("babysex", "frace", "malform", "mrace"), as.factor)
+
+baby_df %>%
+  summarise_all(funs(sum(is.na(.))))
+```
+
+Create the first model of birthweight using only length at birth and gestational age. 
+
+```{r}
+model_fit_1 = lm(bwt ~ blength + gaweeks, data = baby_df)
+
+baby_df %>% 
+  add_residuals(model_fit_1) %>% 
+  add_predictions(model_fit_1) %>%
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point()
+```
+
+Create the second model of birthweight using the interaction of head circumference, length, and sex. 
+
+```{r}
+model_fit_2 = lm(bwt ~ bhead * blength + bhead * babysex + blength * babysex + bhead * blength * babysex, data = baby_df)
+
+baby_df %>% 
+  add_residuals(model_fit_2) %>% 
+  add_predictions(model_fit_2) %>%
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point()
+```
+
+Create a third model. We will use the Boruta package in R to select features for our model. 
+
+```{r}
+set.seed(111)
+boruta = Boruta(bwt ~ ., data = baby_df, doTrace = 2, maxRuns = 11)
+print(boruta)
+plot(boruta, las = 2, cex.axis = 0.8, cex.lab = 1.5, xlab = NULL)
+imp = as.data.frame(attStats(boruta))
+imp = data.frame(rownames(imp),imp)
+colnames(imp)[1] = "variables"
+
+imp = 
+  imp %>% 
+  filter(meanImp>0) %>% 
+  arrange(desc(meanImp))
+
+plot_imp = 
+  imp %>% 
+  ggplot(aes(x = reorder(variables,meanImp), y = meanImp)) + 
+  geom_bar(stat = "identity") + 
+  coord_flip() + xlab("Predictor") + ylab("Importance") +
+  theme(axis.text = element_text(size=14,face="bold"), axis.title=element_text(size=18,face="bold"))
+
+plot_imp
+
+model_fit_3 = lm(bwt ~ blength + bhead + gaweeks + delwt + mrace + frace + wtgain + ppwt + smoken + mheight + momage + fincome, data = baby_df) 
+
+baby_df %>% 
+  add_residuals(model_fit_3) %>% 
+  add_predictions(model_fit_3) %>%
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point()
+```
+
+Compare the three models using cross validation and RMSE.
+```{r}
+cv_df = 
+  crossv_mc(baby_df, 100) 
+
+cv_df %>% pull(train) %>% .[[1]] %>% as_tibble
+cv_df %>% pull(test) %>% .[[1]] %>% as_tibble
+
+cv_df = 
+  cv_df %>%
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)
+  )
+
+cv_df = 
+  cv_df %>%
+  mutate(model_1 = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+         model_2 = map(train, ~lm(bwt ~ bhead * blength + bhead * babysex + blength * babysex + bhead * blength * babysex, data = .x)),
+         model_3 = map(train, ~lm(bwt ~ blength + bhead + gaweeks + delwt + mrace + frace + wtgain + ppwt + smoken + mheight + momage + fincome, data = .x))
+         ) %>%
+  mutate(
+    rmse_1 = map2_dbl(.x = model_1, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_2 = map2_dbl(.x = model_2, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_3 = map2_dbl(.x = model_3, .y = test, ~rmse(model = .x, data = .y))
+  )
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+## Problem 3: Revisiting Central Park Weather Data 
+
+Load data
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
