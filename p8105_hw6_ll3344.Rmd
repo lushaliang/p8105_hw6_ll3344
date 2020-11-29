@@ -4,7 +4,7 @@ author: "Lusha Liang"
 output: github_document
 ---
 
-Load packages.
+Load packages and set plot theme.
 ```{r}
 library(tidyverse)
 library(modelr)
@@ -83,7 +83,10 @@ models_results_df %>%
   ggplot(aes(x = city_state, y = OR)) + 
   geom_point() + 
   geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylab("Odds ratios") + 
+  xlab("City_State") +
+  ggtitle("Odds Ratios by City_state") 
 ```
 
 ## Problem 2: Birthweight Models
@@ -108,10 +111,11 @@ baby_df %>%
   add_residuals(model_fit_1) %>% 
   add_predictions(model_fit_1) %>%
   ggplot(aes(x = pred, y = resid)) + 
-  geom_point()
+  geom_point() +
+  ggtitle("Model 1 Residuals")
 ```
 
-Create the second model of birthweight using the interaction of head circumference, length, and sex. 
+Create the second model of birthweight using the interaction of head circumference, length, and sex. This plot of residuals against predicted values demonstrates overall lower residuals than in the first model. 
 
 ```{r}
 model_fit_2 = lm(bwt ~ bhead * blength + bhead * babysex + blength * babysex + bhead * blength * babysex, data = baby_df)
@@ -120,16 +124,18 @@ baby_df %>%
   add_residuals(model_fit_2) %>% 
   add_predictions(model_fit_2) %>%
   ggplot(aes(x = pred, y = resid)) + 
-  geom_point()
+  geom_point() +
+  ggtitle("Model 2 Residuals")
 ```
 
-Create a third model. We will use the Boruta package in R to select features for our model. 
+Create a third model. We will use the Boruta package in R to select features for our model. Boruta uses a random forest algorithm for feature selection. The first plot generated shows predictors that were considered significant in green, "tentative" predictors in yellow, and rejected predictors in red. In this model, we will choose to incorporate only attributes deemed as important as predictors in our regression model. The second plot simply shows predictors ranked by variable importance. 
 
 ```{r, warning = FALSE}
 set.seed(111)
 boruta = Boruta(bwt ~ ., data = baby_df, doTrace = 2, maxRuns = 20)
 print(boruta)
-plot(boruta, las = 2, cex.axis = 0.8, cex.lab = 1.5, xlab = NULL)
+plot(boruta, las = 2, cex.axis = 0.8, cex.lab = 1.5, xlab = NULL, main = "Confirmed, Tentative, and Rejected Attributes by Boruta")
+
 imp = as.data.frame(attStats(boruta))
 imp = data.frame(rownames(imp),imp)
 colnames(imp)[1] = "variables"
@@ -144,7 +150,8 @@ plot_imp =
   ggplot(aes(x = reorder(variables,meanImp), y = meanImp)) + 
   geom_bar(stat = "identity") + 
   coord_flip() + xlab("Predictor") + ylab("Importance") +
-  theme(axis.text = element_text(size=14,face="bold"), axis.title=element_text(size=18,face="bold"))
+  theme(axis.text = element_text(size=14,face="bold"), axis.title=element_text(size=18,face="bold")) +
+  ggtitle("Relative Predictor Importance by Boruta")
 
 plot_imp
 
@@ -154,11 +161,15 @@ baby_df %>%
   add_residuals(model_fit_3) %>% 
   add_predictions(model_fit_3) %>%
   ggplot(aes(x = pred, y = resid)) + 
-  geom_point()
+  geom_point() +
+  ggtitle("Model 3 Residuals")
 ```
 
-Compare the three models using cross validation and RMSE.
-```{r}
+The residuals plot appears similar to the plot generated from model 2.
+
+Compare the three models using cross validation and RMSE. The plot of rmse distributions shows that the model we created using Boruta (model 3) has the lowest RMSE on average. 
+
+```{r, warning = FALSE}
 cv_df = 
   crossv_mc(baby_df, 100) 
 
@@ -192,12 +203,14 @@ cv_df %>%
     values_to = "rmse",
     names_prefix = "rmse_") %>% 
   mutate(model = fct_inorder(model)) %>% 
-  ggplot(aes(x = model, y = rmse)) + geom_violin()
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin() +
+  ggtitle("RMSE distribution in each model")
 ```
 
 ## Problem 3: Revisiting Central Park Weather Data 
 
-Load data
+Load data.
 
 ```{r}
 weather_df = 
@@ -244,13 +257,15 @@ Plot estimates.
 
 bootstrap_df %>%
   ggplot(aes(x = r.squared)) +
-  geom_density()
+  geom_density() +
+  ggtitle("R Squared Density Plot")
 
 # log_product density plot
 
 bootstrap_df %>%
   ggplot(aes(x = log_product)) +
-  geom_density()
+  geom_density() +
+  ggtitle("Log product Density Plot")
 ```
 
 Both plots appear fairly normally distributed. The plot of r.squared is slightly left skewed. 
